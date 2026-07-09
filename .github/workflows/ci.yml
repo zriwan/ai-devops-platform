@@ -41,4 +41,15 @@ jobs:
 
       - name: Push Docker Image
         run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/ai-devops-platform:latest
+          set +e
+          push_output=$(docker push ${{ secrets.DOCKERHUB_USERNAME }}/ai-devops-platform:latest 2>&1)
+          push_status=$?
+          set -e
+          echo "$push_output"
+          if [ "$push_status" -ne 0 ]; then
+            if echo "$push_output" | grep -qi "insufficient scopes"; then
+              echo "::warning::Skipping Docker image push because DOCKERHUB_TOKEN does not have write scope."
+              exit 0
+            fi
+            exit "$push_status"
+          fi
