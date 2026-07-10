@@ -1,9 +1,10 @@
-name: CI Pipeline
+name: CI/CD Pipeline
 
 on:
   push:
     branches:
       - main
+
   pull_request:
     branches:
       - main
@@ -30,15 +31,65 @@ jobs:
           pytest
 
       - name: Login to DockerHub
+        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker Image
+        if: github.event_name == 'push'
         run: |
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/ai-devops-platform:latest .
+          docker build \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/ai-devops-platform:latest \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/ai-devops-platform:${{ github.sha }} \
+            .
 
       - name: Push Docker Image
+        if: github.event_name == 'push'
         run: |
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/ai-devops-platform:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/ai-devops-platform:${{ github.sha }}
+
+      - name: Configure SSH
+        if: github.event_name == 'push'
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2
+        if: github.event_name == 'push'
+        run: |
+          ssh -i ~/.ssh/ec2_key \
+            "${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}" << 'EOF'
+
+            set -e
+
+            IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/ai-devops-platform:${{ github.sha }}"
+            CONTAINER="ai-devops-container"
+
+            echo "Pulling image: $IMAGE"
+            docker pull "$IMAGE"
+
+            echo "Removing old container..."
+            docker rm -f "$CONTAINER" 2>/dev/null || true
+
+            echo "Starting new container..."
+            docker run -d \
+              --name "$CONTAINER" \
+              --restart unless-stopped \
+              -e APP_ENV=production \
+              -p 5000:5000 \
+              "$IMAGE"
+
+            echo "Waiting for application..."
+            sleep 8
+
+            echo "Running health check..."
+            curl --fail --retry 5 --retry-delay 3 \
+              http://127.0.0.1:5000/health
+
+            echo "Deployment successful."
+          EOF
