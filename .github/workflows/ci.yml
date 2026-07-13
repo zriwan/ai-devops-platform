@@ -59,7 +59,22 @@ jobs:
           chmod 600 ~/.ssh/ec2_key
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Deploy to EC2
+                  - name: Copy deployment files to EC2
+        if: github.event_name == 'push'
+        run: |
+          ssh -i ~/.ssh/ec2_key \
+            "${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}" \
+            "mkdir -p ~/ai-devops-platform/nginx"
+
+          scp -i ~/.ssh/ec2_key \
+            docker-compose.yml \
+            "${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:~/ai-devops-platform/docker-compose.yml"
+
+          scp -i ~/.ssh/ec2_key \
+            nginx/default.conf \
+            "${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:~/ai-devops-platform/nginx/default.conf"
+
+      - name: Deploy with Docker Compose
         if: github.event_name == 'push'
         run: |
           ssh -i ~/.ssh/ec2_key \
@@ -67,29 +82,20 @@ jobs:
 
             set -e
 
-            IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/ai-devops-platform:${{ github.sha }}"
-            CONTAINER="ai-devops-container"
+            cd ~/ai-devops-platform
 
-            echo "Pulling image: $IMAGE"
-            docker pull "$IMAGE"
+            export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
+            export IMAGE_TAG="${{ github.sha }}"
 
-            echo "Removing old container..."
-            docker rm -f "$CONTAINER" 2>/dev/null || true
+            docker compose pull
+            docker compose down
+            docker compose up -d
 
-            echo "Starting new container..."
-            docker run -d \
-              --name "$CONTAINER" \
-              --restart unless-stopped \
-              -e APP_ENV=production \
-              -p 5000:5000 \
-              "$IMAGE"
+            echo "Waiting for services..."
+            sleep 10
 
-            echo "Waiting for application..."
-            sleep 8
-
-            echo "Running health check..."
             curl --fail --retry 5 --retry-delay 3 \
-              http://127.0.0.1:5000/health
+              http://127.0.0.1/health
 
-            echo "Deployment successful."
+            echo "Nginx production deployment successful."
           EOF
