@@ -59,12 +59,15 @@ jobs:
           chmod 600 ~/.ssh/ec2_key
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Copy deployment files to EC2
+      - name: Copy Deployment Files to EC2
         if: github.event_name == 'push'
         run: |
           ssh -i ~/.ssh/ec2_key \
             "${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}" \
-            "mkdir -p ~/ai-devops-platform/nginx"
+            "mkdir -p \
+              ~/ai-devops-platform/nginx \
+              ~/ai-devops-platform/prometheus \
+              ~/ai-devops-platform/grafana/provisioning/datasources"
 
           scp -i ~/.ssh/ec2_key \
             docker-compose.yml \
@@ -73,6 +76,14 @@ jobs:
           scp -i ~/.ssh/ec2_key \
             nginx/default.conf \
             "${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:~/ai-devops-platform/nginx/default.conf"
+
+          scp -i ~/.ssh/ec2_key \
+            prometheus/prometheus.yml \
+            "${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:~/ai-devops-platform/prometheus/prometheus.yml"
+
+          scp -i ~/.ssh/ec2_key \
+            grafana/provisioning/datasources/prometheus.yml \
+            "${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:~/ai-devops-platform/grafana/provisioning/datasources/prometheus.yml"
 
       - name: Deploy with Docker Compose
         if: github.event_name == 'push'
@@ -85,16 +96,39 @@ jobs:
 
             export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
             export IMAGE_TAG="${{ github.sha }}"
+            export GRAFANA_ADMIN_PASSWORD="${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
 
+            echo "Pulling latest service images..."
             docker compose pull
-            docker compose down
+
+            echo "Removing old standalone containers if present..."
+            docker rm -f ai-devops-container 2>/dev/null || true
+            docker rm -f ai-devops-nginx 2>/dev/null || true
+            docker rm -f ai-devops-prometheus 2>/dev/null || true
+            docker rm -f ai-devops-grafana 2>/dev/null || true
+            docker rm -f ai-devops-node-exporter 2>/dev/null || true
+            docker rm -f ai-devops-cadvisor 2>/dev/null || true
+
+            echo "Stopping previous Compose stack..."
+            docker compose down || true
+
+            echo "Starting application and monitoring stack..."
             docker compose up -d
 
-            echo "Waiting for services..."
-            sleep 10
+            echo "Waiting for services to start..."
+            sleep 20
 
+            echo "Checking application health..."
             curl --fail --retry 5 --retry-delay 3 \
               http://127.0.0.1/health
 
-            echo "Nginx production deployment successful."
+            echo "Checking Prometheus health..."
+            curl --fail --retry 5 --retry-delay 3 \
+              http://127.0.0.1:9090/-/healthy
+
+            echo "Checking Grafana health..."
+            curl --fail --retry 5 --retry-delay 3 \
+              http://127.0.0.1:3000/api/health
+
+            echo "Application and monitoring stack deployed successfully."
           EOF
