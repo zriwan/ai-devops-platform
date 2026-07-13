@@ -59,7 +59,7 @@ jobs:
           chmod 600 ~/.ssh/ec2_key
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
-                  - name: Copy deployment files to EC2
+      - name: Copy deployment files to EC2
         if: github.event_name == 'push'
         run: |
           ssh -i ~/.ssh/ec2_key \
@@ -79,7 +79,6 @@ jobs:
         run: |
           ssh -i ~/.ssh/ec2_key \
             "${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}" << 'EOF'
-
             set -e
 
             cd ~/ai-devops-platform
